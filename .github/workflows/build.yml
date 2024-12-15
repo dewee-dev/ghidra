@@ -1,0 +1,75 @@
+name: Ghidra Build
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        java-version: [21]
+
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up JDK
+      uses: actions/setup-java@v3
+      with:
+        java-version: ${{ matrix.java-version }}
+        distribution: 'temurin'
+        cache: 'gradle'
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        
+    - name: Install Linux Dependencies
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y make gcc g++
+        
+    - name: Install Windows Dependencies
+      if: runner.os == 'Windows'
+      uses: microsoft/setup-msbuild@v1.1
+        
+    - name: Cache Gradle packages
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+        key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+        restore-keys: |
+          ${{ runner.os }}-gradle-
+
+    - name: Fetch Dependencies
+      run: |
+        gradle -I gradle/support/fetchDependencies.gradle
+      
+    - name: Build Ghidra
+      run: |
+        gradle buildGhidra
+        
+    - name: Run Tests
+      run: |
+        gradle test
+        
+    - name: Upload Build Artifacts
+      if: success()
+      uses: actions/upload-artifact@v3
+      with:
+        name: ghidra-${{ runner.os }}
+        path: build/dist/*.zip
+        
+    - name: Clean Gradle Cache
+      if: always()
+      run: |
+        rm -rf ~/.gradle/caches/
+      shell: bash
