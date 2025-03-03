@@ -24,6 +24,7 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.lang.invoke.MethodHandles;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -234,7 +235,7 @@ public class DebuggerListingProvider extends CodeViewerProvider {
 			super(DebuggerListingProvider.this.tool, DebuggerListingProvider.this.plugin,
 				DebuggerListingProvider.this);
 
-			getListingPanel().addIndexMapChangeListener(e -> this.doTrack());
+			getListingPanel().addIndexMapChangeListener(e -> this.doTrack(TrackCause.DB_CHANGE));
 		}
 
 		@Override
@@ -286,6 +287,58 @@ public class DebuggerListingProvider extends CodeViewerProvider {
 				return;
 			}
 			disassemblyDebouncer.contact(loc.getByteAddress());
+		}
+	}
+
+	protected class ForListingClipboardProvider extends CodeBrowserClipboardProvider {
+		protected class PasteIntoTargetCommand extends PasteByteStringCommand
+				implements PasteIntoTargetMixin {
+			protected PasteIntoTargetCommand(String string) {
+				super(string);
+			}
+
+			@Override
+			protected boolean hasEnoughSpace(Program program, Address address, int byteCount) {
+				return doHasEnoughSpace(program, address, byteCount);
+			}
+
+			@Override
+			protected boolean pasteBytes(Program program, byte[] bytes) {
+				return doPasteBytes(tool, controlService, consoleService, current, currentLocation,
+					bytes);
+			}
+		}
+
+		protected ForListingClipboardProvider() {
+			super(DebuggerListingProvider.this.tool, DebuggerListingProvider.this);
+		}
+
+		@Override
+		public boolean isValidContext(ActionContext context) {
+			if (!(context instanceof DebuggerListingActionContext)) {
+				return false;
+			}
+			return context.getComponentProvider() == componentProvider;
+		}
+
+		@Override
+		public boolean canPaste(DataFlavor[] availableFlavors) {
+			if (controlService == null) {
+				return false;
+			}
+			Trace trace = current.getTrace();
+			if (trace == null) {
+				return false;
+			}
+			if (!controlService.getCurrentMode(trace).canEdit(current)) {
+				return false;
+			}
+			return super.canPaste(availableFlavors);
+		}
+
+		@Override
+		protected boolean pasteByteString(String string) {
+			return tool.execute(new PasteIntoTargetCommand(string), currentProgram);
 		}
 	}
 
@@ -772,30 +825,7 @@ public class DebuggerListingProvider extends CodeViewerProvider {
 
 	@Override
 	protected CodeBrowserClipboardProvider newClipboardProvider() {
-		return new CodeBrowserClipboardProvider(tool, this) {
-			@Override
-			public boolean isValidContext(ActionContext context) {
-				if (!(context instanceof DebuggerListingActionContext)) {
-					return false;
-				}
-				return context.getComponentProvider() == componentProvider;
-			}
-
-			@Override
-			public boolean canPaste(DataFlavor[] availableFlavors) {
-				if (controlService == null) {
-					return false;
-				}
-				Trace trace = current.getTrace();
-				if (trace == null) {
-					return false;
-				}
-				if (!controlService.getCurrentMode(trace).canEdit(current)) {
-					return false;
-				}
-				return super.canPaste(availableFlavors);
-			}
-		};
+		return new ForListingClipboardProvider();
 	}
 
 	protected void createActions() {
@@ -1199,6 +1229,11 @@ public class DebuggerListingProvider extends CodeViewerProvider {
 
 	public AutoReadMemorySpec getAutoReadMemorySpec() {
 		return readsMemTrait.getAutoSpec();
+	}
+
+	/* testing */
+	CompletableFuture<?> getLastAutoRead() {
+		return readsMemTrait.getLastRead();
 	}
 
 	public void doAutoSyncCursorIntoStatic(ProgramLocation location) {

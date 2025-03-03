@@ -92,11 +92,18 @@ x86_compiler_map = {
     'Cygwin': 'windows',
 }
 
+riscv_compiler_map = {
+    'GNU/Linux': 'gcc',
+    'Cygwin': 'gcc',
+}
+
 compiler_map = {
     'DATA:BE:64:default': data64_compiler_map,
     'DATA:LE:64:default': data64_compiler_map,
     'x86:LE:32:default': x86_compiler_map,
     'x86:LE:64:default': x86_compiler_map,
+    'RISCV:LE:32:default': riscv_compiler_map,
+    'RISCV:LE:64:default': riscv_compiler_map,
 }
 
 
@@ -164,7 +171,7 @@ def compute_ghidra_compiler(lang):
 
     # Check if the selected lang has specific compiler recommendations
     if not lang in compiler_map:
-        print(f"{lang} not found in compiler map")
+        print(f"{lang} not found in compiler map - using default compiler")
         return 'default'
     comp_map = compiler_map[lang]
     if comp_map == data64_compiler_map:
@@ -174,7 +181,7 @@ def compute_ghidra_compiler(lang):
         return comp_map[osabi]
     if None in comp_map:
         return comp_map[None]
-    print(f"{osabi} not found in compiler map")
+    print(f"{osabi} not found in compiler map - using default compiler")
     return 'default'
 
 
