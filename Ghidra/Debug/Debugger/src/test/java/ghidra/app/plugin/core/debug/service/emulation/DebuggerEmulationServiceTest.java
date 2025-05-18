@@ -58,6 +58,11 @@ import ghidra.trace.model.breakpoint.TraceBreakpointKind;
 import ghidra.trace.model.guest.TracePlatform;
 import ghidra.trace.model.memory.TraceMemoryManager;
 import ghidra.trace.model.memory.TraceMemorySpace;
+import ghidra.trace.model.stack.TraceObjectStack;
+import ghidra.trace.model.stack.TraceObjectStackFrame;
+import ghidra.trace.model.target.path.KeyPath;
+import ghidra.trace.model.target.path.PathFilter;
+import ghidra.trace.model.target.schema.TraceObjectSchema;
 import ghidra.trace.model.thread.TraceThread;
 import ghidra.trace.model.time.TraceSnapshot;
 import ghidra.trace.model.time.schedule.Scheduler;
@@ -329,7 +334,7 @@ public class DebuggerEmulationServiceTest extends AbstractGhidraHeadedDebuggerTe
 					.findAny()
 					.orElse(null)
 					.take(tool, tb.trace);
-		platformPlugin.setCurrentMapperFor(tb.trace, mapper, 0);
+		platformPlugin.setCurrentMapperFor(tb.trace, null, mapper, 0);
 		waitForSwing();
 
 		waitForPass(() -> assertEquals(x64, traceManager.getCurrentPlatform().getLanguage()));
@@ -493,7 +498,7 @@ public class DebuggerEmulationServiceTest extends AbstractGhidraHeadedDebuggerTe
 					.addBreakpoint("Breakpoints[1]", Lifespan.nowOn(0), addrI1, Set.of(thread),
 						Set.of(TraceBreakpointKind.SW_EXECUTE), true, "test");
 			// Force "partial instruction"
-			tb.setEmuSleigh("""
+			tb.setEmuSleigh(0, """
 					r1 = 0xbeef;
 					emu_swi();
 					emu_exec_decoded();
@@ -567,7 +572,7 @@ public class DebuggerEmulationServiceTest extends AbstractGhidraHeadedDebuggerTe
 					.addBreakpoint("Breakpoints[1]", Lifespan.nowOn(0), addrI1, Set.of(thread),
 						Set.of(TraceBreakpointKind.SW_EXECUTE), true, "test");
 			// Force "partial instruction"
-			tb.setEmuSleigh("""
+			tb.setEmuSleigh(0, """
 					r1 = 0xbeef;
 					emu_swi();
 					emu_exec_decoded();
@@ -633,7 +638,7 @@ public class DebuggerEmulationServiceTest extends AbstractGhidraHeadedDebuggerTe
 					.addBreakpoint("Breakpoints[1]", Lifespan.nowOn(0), addrI1, Set.of(thread),
 						Set.of(TraceBreakpointKind.SW_EXECUTE), true, "test");
 			// Force "partial instruction"
-			tb.setEmuSleigh("""
+			tb.setEmuSleigh(0, """
 					r1 = 0xbeef;
 					pcodeop_one(r1);
 					emu_exec_decoded();
@@ -707,7 +712,7 @@ public class DebuggerEmulationServiceTest extends AbstractGhidraHeadedDebuggerTe
 			TraceBreakpoint tb = trace.getBreakpointManager()
 					.addBreakpoint("Breakpoints[0]", Lifespan.nowOn(0), addrI2, Set.of(thread),
 						Set.of(TraceBreakpointKind.SW_EXECUTE), true, "test");
-			tb.setEmuSleigh("""
+			tb.setEmuSleigh(0, """
 					r1 = 0x5678;
 					emu_swi();
 					emu_exec_decoded();
@@ -852,7 +857,7 @@ public class DebuggerEmulationServiceTest extends AbstractGhidraHeadedDebuggerTe
 			TraceBreakpoint tb = trace.getBreakpointManager()
 					.addBreakpoint("Breakpoints[0]", Lifespan.nowOn(0), addrI2, Set.of(thread),
 						Set.of(TraceBreakpointKind.SW_EXECUTE), true, "test");
-			tb.setEmuSleigh("""
+			tb.setEmuSleigh(0, """
 					r1 = 0x5678;
 					emu_exec_decoded();
 					""");
@@ -970,10 +975,21 @@ public class DebuggerEmulationServiceTest extends AbstractGhidraHeadedDebuggerTe
 
 			TraceThread newTraceThread = ProgramEmulationUtils.doLaunchEmulationThread(tb.trace,
 				newSnap, program, tb.addr(0x00400000), addr(program, 0x00400000));
-			newTraceThread.setName("MyThread");
+			newTraceThread.setName(newSnap, "MyThread");
 
 			@SuppressWarnings("unused")
 			PcodeThread<byte[]> newEmuThread = emulator.newThread(newTraceThread.getPath());
 		}
+	}
+
+	@Test
+	public void testEmuSchemaHasWorkingStackFrames() throws Exception {
+		TraceObjectSchema rootSchema = ProgramEmulationUtils.EMU_SESSION_SCHEMA;
+		TraceObjectSchema threadSchema = rootSchema.getSuccessorSchema(KeyPath.parse("Threads[1]"));
+		KeyPath found = threadSchema.searchForCanonicalContainer(TraceObjectStackFrame.class);
+		assertEquals(KeyPath.parse("Stack"), found);
+
+		PathFilter stackFilter = threadSchema.searchFor(TraceObjectStack.class, false);
+		assertNotNull("Non-unique Stack", stackFilter.getSingletonPath());
 	}
 }

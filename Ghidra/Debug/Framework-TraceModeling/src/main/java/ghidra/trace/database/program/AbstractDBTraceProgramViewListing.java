@@ -35,9 +35,9 @@ import ghidra.program.model.symbol.SourceType;
 import ghidra.program.model.util.CodeUnitInsertionException;
 import ghidra.program.model.util.PropertyMap;
 import ghidra.trace.database.DBTrace;
-import ghidra.trace.database.guest.InternalTracePlatform;
 import ghidra.trace.database.listing.UndefinedDBTraceData;
 import ghidra.trace.database.memory.DBTraceMemorySpace;
+import ghidra.trace.database.program.DBTraceProgramViewMemory.RegionEntry;
 import ghidra.trace.database.thread.DBTraceThread;
 import ghidra.trace.model.*;
 import ghidra.trace.model.listing.*;
@@ -76,7 +76,6 @@ public abstract class AbstractDBTraceProgramViewListing implements TraceProgramV
 
 	protected final DBTraceProgramView program;
 	protected final TraceCodeOperations codeOperations;
-	protected final InternalTracePlatform platform;
 
 	protected final DBTraceProgramViewRootModule rootModule;
 	protected final Map<TraceMemoryRegion, DBTraceProgramViewFragment> fragmentsByRegion =
@@ -89,8 +88,7 @@ public abstract class AbstractDBTraceProgramViewListing implements TraceProgramV
 			TraceCodeOperations codeOperations) {
 		this.program = program;
 		this.codeOperations = codeOperations;
-		// TODO: Guest platform views?
-		this.platform = program.trace.getPlatformManager().getHostPlatform();
+		// TODO: Map addresses when platform is guest?
 
 		this.rootModule = new DBTraceProgramViewRootModule(this);
 	}
@@ -440,11 +438,28 @@ public abstract class AbstractDBTraceProgramViewListing implements TraceProgramV
 	}
 
 	@Override
+	public long getCommentAddressCount() {
+		return program.viewport.unionedAddresses(
+			s -> program.trace.getCommentAdapter().getAddressSetView(Lifespan.at(s)))
+				.getNumAddresses();
+	}
+
+	@Override
 	public String getComment(int commentType, Address address) {
 		try (LockHold hold = program.trace.lockRead()) {
 			return program.viewport.getTop(
 				s -> program.trace.getCommentAdapter().getComment(s, address, commentType));
 		}
+	}
+
+	@Override
+	public CodeUnitComments getAllComments(Address address) {
+		CommentType[] types = CommentType.values();
+		String[] comments = new String[types.length];
+		for (CommentType type : types) {
+			comments[type.ordinal()] = getComment(type, address);
+		}
+		return new CodeUnitComments(comments);
 	}
 
 	@Override
@@ -733,7 +748,7 @@ public abstract class AbstractDBTraceProgramViewListing implements TraceProgramV
 			range, s -> s == TraceMemoryState.KNOWN);
 		long snap = mostRecent == null ? program.snap : mostRecent.getKey().getY2();
 		return codeOperations.instructions()
-				.create(Lifespan.nowOn(snap), addr, platform, prototype, context,
+				.create(Lifespan.nowOn(snap), addr, program.platform, prototype, context,
 					forcedLengthOverride);
 	}
 
@@ -741,7 +756,7 @@ public abstract class AbstractDBTraceProgramViewListing implements TraceProgramV
 	public AddressSetView addInstructions(InstructionSet instructionSet, boolean overwrite)
 			throws CodeUnitInsertionException {
 		return codeOperations.instructions()
-				.addInstructionSet(Lifespan.nowOn(program.snap), platform, instructionSet,
+				.addInstructionSet(Lifespan.nowOn(program.snap), program.platform, instructionSet,
 					overwrite);
 	}
 
@@ -749,12 +764,13 @@ public abstract class AbstractDBTraceProgramViewListing implements TraceProgramV
 	public Data createData(Address addr, DataType dataType, int length)
 			throws CodeUnitInsertionException {
 		return codeOperations.definedData()
-				.create(Lifespan.nowOn(program.snap), addr, dataType, length);
+				.create(Lifespan.nowOn(program.snap), addr, program.platform, dataType, length);
 	}
 
 	@Override
 	public Data createData(Address addr, DataType dataType) throws CodeUnitInsertionException {
-		return codeOperations.definedData().create(Lifespan.nowOn(program.snap), addr, dataType);
+		return codeOperations.definedData()
+				.create(Lifespan.nowOn(program.snap), addr, program.platform, dataType);
 	}
 
 	@Override
@@ -783,13 +799,12 @@ public abstract class AbstractDBTraceProgramViewListing implements TraceProgramV
 
 	@Override
 	public ProgramFragment getFragment(String treeName, Address addr) {
-		TraceMemoryRegion region = program.memory.getTopRegion(
-			s -> program.trace.getMemoryManager().getRegionContaining(s, addr));
-		if (region == null) {
+		RegionEntry entry = program.memory.getRegionsByAddress().get(addr);
+		if (entry == null || !entry.range.contains(addr)) {
 			return null;
 		}
-		return fragmentsByRegion.computeIfAbsent(region,
-			r -> new DBTraceProgramViewFragment(this, r));
+		return fragmentsByRegion.computeIfAbsent(entry.region,
+			r -> new DBTraceProgramViewFragment(this, r, entry.snap));
 	}
 
 	@Override
@@ -802,13 +817,12 @@ public abstract class AbstractDBTraceProgramViewListing implements TraceProgramV
 
 	@Override
 	public ProgramFragment getFragment(String treeName, String name) {
-		TraceMemoryRegion region = program.memory.getTopRegion(
-			s -> program.trace.getMemoryManager().getLiveRegionByPath(s, name));
-		if (region == null) {
+		RegionEntry entry = program.memory.getRegionsByName().get(name);
+		if (entry == null) {
 			return null;
 		}
-		return fragmentsByRegion.computeIfAbsent(region,
-			r -> new DBTraceProgramViewFragment(this, r));
+		return fragmentsByRegion.computeIfAbsent(entry.region,
+			r -> new DBTraceProgramViewFragment(this, r, entry.snap));
 	}
 
 	@Override

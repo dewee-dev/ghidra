@@ -36,17 +36,18 @@ import docking.action.ToggleDockingAction;
 import docking.menu.MultiStateDockingAction;
 import docking.widgets.fieldpanel.support.ViewerPosition;
 import generic.theme.GThemeDefaults.Colors;
+import ghidra.app.events.AbstractLocationPluginEvent;
+import ghidra.app.events.AbstractSelectionPluginEvent;
 import ghidra.app.plugin.core.byteviewer.*;
+import ghidra.app.plugin.core.debug.event.*;
 import ghidra.app.plugin.core.debug.gui.*;
 import ghidra.app.plugin.core.debug.gui.DebuggerResources.FollowsCurrentThreadAction;
 import ghidra.app.plugin.core.debug.gui.action.*;
-import ghidra.app.plugin.core.debug.gui.action.AutoReadMemorySpec.AutoReadMemorySpecConfigFieldCodec;
-import ghidra.app.plugin.core.format.ByteBlock;
-import ghidra.app.plugin.core.format.ByteBlockAccessException;
+import ghidra.app.plugin.core.format.*;
 import ghidra.app.services.*;
 import ghidra.app.services.DebuggerControlService.ControlModeChangeListener;
-import ghidra.debug.api.action.GoToInput;
-import ghidra.debug.api.action.LocationTrackingSpec;
+import ghidra.debug.api.action.*;
+import ghidra.debug.api.action.AutoReadMemorySpec.AutoReadMemorySpecConfigFieldCodec;
 import ghidra.debug.api.tracemgr.DebuggerCoordinates;
 import ghidra.features.base.memsearch.bytesource.AddressableByteSource;
 import ghidra.features.base.memsearch.bytesource.EmptyByteSource;
@@ -134,16 +135,19 @@ public class DebuggerMemoryBytesProvider extends ProgramByteViewerComponentProvi
 		}
 
 		@Override
-		protected void locationTracked() {
-			doGoToTracked();
-		}
-
-		@Override
 		protected void specChanged(LocationTrackingSpec spec) {
+			if (isMainViewer()) {
+				plugin.firePluginEvent(new TrackingChangedPluginEvent(getName(), spec));
+			}
 			updateTitle();
 			trackingLabel.setText("");
 			trackingLabel.setToolTipText("");
 			trackingLabel.setForeground(Colors.FOREGROUND);
+		}
+
+		@Override
+		protected void locationTracked() {
+			doGoToTracked();
 		}
 	}
 
@@ -211,8 +215,7 @@ public class DebuggerMemoryBytesProvider extends ProgramByteViewerComponentProvi
 		}
 	}
 
-	private final AutoReadMemorySpec defaultReadMemorySpec =
-		AutoReadMemorySpec.fromConfigName(VisibleROOnceAutoReadMemorySpec.CONFIG_NAME);
+	private final AutoReadMemorySpec defaultReadMemorySpec = BasicAutoReadMemorySpec.VIS_RO_ONCE;
 
 	private final DebuggerMemoryBytesPlugin myPlugin;
 
@@ -380,14 +383,31 @@ public class DebuggerMemoryBytesProvider extends ProgramByteViewerComponentProvi
 	}
 
 	class TargetByteBlockSet extends ProgramByteBlockSet {
+		private final DebuggerMemoryBytesProvider provider;
+
 		protected TargetByteBlockSet(ByteBlockChangeManager changeManager) {
 			super(DebuggerMemoryBytesProvider.this, DebuggerMemoryBytesProvider.this.program,
 				changeManager);
+			this.provider = DebuggerMemoryBytesProvider.this;
 		}
 
 		@Override
 		protected MemoryByteBlock newMemoryByteBlock(Memory memory, MemoryBlock memBlock) {
 			return new TargetByteBlock(program, memory, memBlock);
+		}
+
+		@Override
+		public AbstractLocationPluginEvent getPluginEvent(String source, ByteBlock block,
+				BigInteger offset, int column) {
+			ProgramLocation loc = provider.getLocation(block, offset, column);
+			return new TraceLocationPluginEvent(source, loc);
+		}
+
+		@Override
+		public AbstractSelectionPluginEvent getPluginEvent(String source,
+				ByteBlockSelection selection) {
+			ProgramSelection pSel = convertSelection(selection);
+			return new TraceSelectionPluginEvent(source, pSel, (TraceProgramView) program);
 		}
 	}
 
@@ -601,6 +621,20 @@ public class DebuggerMemoryBytesProvider extends ProgramByteViewerComponentProvi
 	public void traceClosed(Trace trace) {
 		if (current.getTrace() == trace) {
 			goToCoordinates(DebuggerCoordinates.NOWHERE);
+		}
+	}
+
+	void doHandleTraceEvent(PluginEvent event) {
+		if (getByteBlocks() == null) {
+			return;
+		}
+		switch (event) {
+			case TraceLocationPluginEvent ev -> processLocationEvent(ev);
+			case TraceSelectionPluginEvent ev -> processSelectionEvent(ev);
+			case TraceHighlightPluginEvent ev -> processHighlightEvent(ev);
+			case TrackingChangedPluginEvent ev -> setTrackingSpec(ev.getLocationTrackingSpec());
+			default -> {
+			}
 		}
 	}
 

@@ -36,6 +36,7 @@ import docking.widgets.fieldpanel.support.FieldLocation;
 import generic.Unique;
 import ghidra.app.decompiler.*;
 import ghidra.app.decompiler.component.*;
+import ghidra.app.decompiler.location.DefaultDecompilerLocation;
 import ghidra.app.plugin.assembler.*;
 import ghidra.app.plugin.assembler.sleigh.sem.*;
 import ghidra.app.plugin.core.analysis.*;
@@ -980,7 +981,7 @@ public class StackUnwinderTest extends AbstractGhidraHeadedDebuggerTest {
 			bptUnwind = tb.trace.getBreakpointManager()
 					.addBreakpoint("Breakpoints[0]", Lifespan.nowOn(0), entry, Set.of(),
 						Set.of(TraceBreakpointKind.SW_EXECUTE), true, "unwind stack");
-			bptUnwind.setEmuSleigh("""
+			bptUnwind.setEmuSleigh(0, """
 					if (%s >= 0x%x) goto <skip>;
 					  emu_swi();
 					<skip>
@@ -1610,10 +1611,14 @@ public class StackUnwinderTest extends AbstractGhidraHeadedDebuggerTest {
 							FieldLocation fLoc = new FieldLocation(i, j, r, c);
 							ClangToken token = clangField.getToken(fLoc);
 							if (token != null && tokText.equals(token.getText())) {
-								DecompilerLocation loc = token.getMinAddress() == null ? null
-										: new DecompilerLocation(program, token.getMinAddress(),
-											function.getEntryPoint(), results, token, i.intValue(),
-											0);
+
+								Address entryPoint = function.getEntryPoint();
+								DecompilerLocationInfo info =
+									new DecompilerLocationInfo(entryPoint, results, token,
+										i.intValue(), 0);
+								DefaultDecompilerLocation loc = token.getMinAddress() == null ? null
+										: new DefaultDecompilerLocation(program,
+											token.getMinAddress(), info);
 								return new HoverLocation(loc, fLoc, field, token);
 							}
 						}

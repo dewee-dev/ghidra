@@ -34,8 +34,12 @@ import ghidra.trace.model.breakpoint.TraceBreakpointKind;
 import ghidra.trace.model.guest.TracePlatform;
 import ghidra.trace.model.memory.TraceMemoryState;
 import ghidra.trace.model.stack.TraceStackFrame;
+import ghidra.trace.model.target.TraceObject;
 import ghidra.trace.model.target.path.KeyPath;
 import ghidra.trace.model.thread.TraceThread;
+import ghidra.trace.model.time.TraceSnapshot;
+import ghidra.trace.model.time.schedule.TraceSchedule;
+import ghidra.trace.model.time.schedule.TraceSchedule.ScheduleForm;
 import ghidra.util.Swing;
 import ghidra.util.exception.CancelledException;
 import ghidra.util.task.TaskMonitor;
@@ -182,6 +186,78 @@ public interface Target {
 	}
 
 	/**
+	 * Specifies how object arguments are derived
+	 */
+	public enum ObjectArgumentPolicy {
+		/**
+		 * The object should be taken exactly from the action context, if applicable, present, and
+		 * matching in schema.
+		 */
+		CONTEXT_ONLY {
+			@Override
+			public boolean allowContextObject() {
+				return true;
+			}
+
+			@Override
+			public boolean allowCoordsObject() {
+				return false;
+			}
+
+			@Override
+			public boolean allowSuitableRelative() {
+				return false;
+			}
+		},
+		/**
+		 * The object should be taken from the current (active) object in the tool, or a suitable
+		 * relative having the correct schema.
+		 */
+		CURRENT_AND_RELATED {
+			@Override
+			public boolean allowContextObject() {
+				return false;
+			}
+
+			@Override
+			public boolean allowCoordsObject() {
+				return true;
+			}
+
+			@Override
+			public boolean allowSuitableRelative() {
+				return true;
+			}
+		},
+		/**
+		 * The object can be taken from the given context, or the current (active) object in the
+		 * tool, or a suitable relative having the correct schema.
+		 */
+		EITHER_AND_RELATED {
+			@Override
+			public boolean allowContextObject() {
+				return true;
+			}
+
+			@Override
+			public boolean allowCoordsObject() {
+				return true;
+			}
+
+			@Override
+			public boolean allowSuitableRelative() {
+				return true;
+			}
+		};
+
+		public abstract boolean allowContextObject();
+
+		public abstract boolean allowCoordsObject();
+
+		public abstract boolean allowSuitableRelative();
+	}
+
+	/**
 	 * Describe the target for display in the UI
 	 * 
 	 * @return the description
@@ -206,21 +282,65 @@ public interface Target {
 	 * Get the current snapshot key for the target
 	 * 
 	 * <p>
-	 * For most targets, this is the most recently created snapshot.
+	 * For most targets, this is the most recently created snapshot. For time-traveling targets, if
+	 * may not be. If this returns a negative number, then it refers to a scratch snapshot and
+	 * almost certainly indicates time travel with instruction steps. Use {@link #getTime()} in that
+	 * case to get a more precise schedule.
 	 * 
 	 * @return the snapshot
 	 */
-	// TODO: Should this be TraceSchedule getTime()?
 	long getSnap();
+
+	/**
+	 * Get the current time
+	 * 
+	 * @return the current time
+	 */
+	default TraceSchedule getTime() {
+		long snap = getSnap();
+		if (snap >= 0) {
+			return TraceSchedule.snap(snap);
+		}
+		TraceSnapshot snapshot = getTrace().getTimeManager().getSnapshot(snap, false);
+		if (snapshot == null) {
+			return null;
+		}
+		return snapshot.getSchedule();
+	}
+
+	/**
+	 * Get the form of schedules supported by "activate" on the back end
+	 * 
+	 * <p>
+	 * A non-null return value indicates the back end supports time travel. If it does, the return
+	 * value indicates the form of schedules that can be activated, (i.e., via some "go to time"
+	 * command). NOTE: Switching threads is considered an event by every time-traveling back end
+	 * that we know of. Events are usually mapped to a Ghidra trace's snapshots, and so most back
+	 * ends are constrained to schedules of the form {@link ScheduleForm#SNAP_EVT_STEPS}. A back-end
+	 * based on emulation may support thread switching. To support p-code op stepping, the back-end
+	 * will certainly have to be based on p-code emulation, and it must be using the same Sleigh
+	 * language as Ghidra.
+	 * 
+	 * @param obj the object (or an ancestor) that may support time travel
+	 * @param snap the <em>destination</em> snapshot
+	 * @return the form
+	 */
+	public ScheduleForm getSupportedTimeForm(TraceObject obj, long snap);
 
 	/**
 	 * Collect all actions that implement the given common debugger command
 	 * 
+	 * <p>
+	 * Note that if the context provides a program location (i.e., address), the object policy is
+	 * ignored. It will use current and related objects.
+	 * 
 	 * @param name the action name
 	 * @param context applicable context from the UI
+	 * @param policy determines how objects may be found
 	 * @return the collected actions
 	 */
-	Map<String, ActionEntry> collectActions(ActionName name, ActionContext context);
+	Map<String, ActionEntry> collectActions(ActionName name, ActionContext context,
+			ObjectArgumentPolicy policy);
 
 	/**
 	 * @see #execute(String, boolean)
@@ -569,4 +689,15 @@ public interface Target {
 	 * @see #disconnectAsync()
 	 */
 	void disconnect();
+
+	/**
+	 * Check if the target is busy updating the trace
+	 * 
+	 * <p>
+	 * This generally means the connection has an open transaction. If <em>does not</em> indicate
+	 * the execution state of the target/debuggee.
+	 * 
+	 * @return true if busy
+	 */
+	boolean isBusy();
 }

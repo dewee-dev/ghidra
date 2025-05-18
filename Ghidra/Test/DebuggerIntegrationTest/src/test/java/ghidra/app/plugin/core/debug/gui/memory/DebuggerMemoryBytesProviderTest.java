@@ -17,6 +17,7 @@ package ghidra.app.plugin.core.debug.gui.memory;
 
 import static ghidra.lifecycle.Unfinished.TODO;
 import static org.junit.Assert.*;
+import static org.junit.Assume.assumeFalse;
 
 import java.awt.*;
 import java.awt.datatransfer.Clipboard;
@@ -62,13 +63,16 @@ import ghidra.program.model.lang.RegisterValue;
 import ghidra.program.util.ProgramLocation;
 import ghidra.trace.database.ToyDBTraceBuilder;
 import ghidra.trace.database.memory.DBTraceMemoryManager;
+import ghidra.trace.database.memory.DBTraceMemorySpace;
 import ghidra.trace.database.stack.DBTraceStackManager;
+import ghidra.trace.database.time.DBTraceTimeManager;
 import ghidra.trace.model.Lifespan;
 import ghidra.trace.model.memory.*;
 import ghidra.trace.model.modules.TraceModule;
 import ghidra.trace.model.stack.TraceStack;
 import ghidra.trace.model.target.TraceObject;
 import ghidra.trace.model.thread.TraceThread;
+import ghidra.util.SystemUtilities;
 
 @Category(NightlyCategory.class)
 public class DebuggerMemoryBytesProviderTest extends AbstractGhidraHeadedDebuggerIntegrationTest {
@@ -836,7 +840,7 @@ public class DebuggerMemoryBytesProviderTest extends AbstractGhidraHeadedDebugge
 		waitForPass(() -> assertEquals("modExe", memBytesProvider.locationLabel.getText()));
 
 		try (Transaction tx = tb.startTransaction()) {
-			modExe.addSection(".text", tb.range(0x55550000, 0x555500ff));
+			modExe.addSection(0, ".text", tb.range(0x55550000, 0x555500ff));
 		}
 		waitForDomainObject(tb.trace);
 		waitForPass(() -> assertEquals("modExe:.text", memBytesProvider.locationLabel.getText()));
@@ -917,8 +921,8 @@ public class DebuggerMemoryBytesProviderTest extends AbstractGhidraHeadedDebugge
 			thread = tb.getOrAddThread("Thread 1", 0);
 			DBTraceStackManager sm = tb.trace.getStackManager();
 			TraceStack stack = sm.getStack(thread, 0, true);
-			stack.getFrame(0, true).setProgramCounter(Lifespan.ALL, tb.addr(0x00401234));
-			stack.getFrame(1, true).setProgramCounter(Lifespan.ALL, tb.addr(0x00404321));
+			stack.getFrame(0, 0, true).setProgramCounter(Lifespan.ALL, tb.addr(0x00401234));
+			stack.getFrame(0, 1, true).setProgramCounter(Lifespan.ALL, tb.addr(0x00404321));
 		}
 		waitForDomainObject(tb.trace);
 		traceManager.activateThread(thread);
@@ -981,7 +985,7 @@ public class DebuggerMemoryBytesProviderTest extends AbstractGhidraHeadedDebugge
 
 			DBTraceStackManager sm = tb.trace.getStackManager();
 			TraceStack stack = sm.getStack(thread, 0, true);
-			stack.getFrame(0, true);
+			stack.getFrame(0, 0, true);
 		}
 		waitForDomainObject(tb.trace);
 		traceManager.activate(DebuggerCoordinates.NOWHERE.thread(thread).snap(0));
@@ -1012,7 +1016,7 @@ public class DebuggerMemoryBytesProviderTest extends AbstractGhidraHeadedDebugge
 				TraceMemoryFlag.READ, TraceMemoryFlag.EXECUTE);
 			thread = tb.getOrAddThread("Thread 1", 0);
 			TraceStack stack = sm.getStack(thread, 0, true);
-			stack.getFrame(0, true).setProgramCounter(Lifespan.ALL, tb.addr(0x00401234));
+			stack.getFrame(0, 0, true).setProgramCounter(Lifespan.ALL, tb.addr(0x00401234));
 		}
 		waitForDomainObject(tb.trace);
 		traceManager.activateThread(thread);
@@ -1022,7 +1026,7 @@ public class DebuggerMemoryBytesProviderTest extends AbstractGhidraHeadedDebugge
 
 		try (Transaction tx = tb.startTransaction()) {
 			TraceStack stack = sm.getStack(thread, 0, true);
-			stack.getFrame(0, true).setProgramCounter(Lifespan.ALL, tb.addr(0x00404321));
+			stack.getFrame(0, 0, true).setProgramCounter(Lifespan.ALL, tb.addr(0x00404321));
 		}
 		waitForDomainObject(tb.trace);
 
@@ -1183,5 +1187,34 @@ public class DebuggerMemoryBytesProviderTest extends AbstractGhidraHeadedDebugge
 		performAction(actionEdit);
 
 		rmiCx.withdrawTarget(tool, tb.trace);
+	}
+
+	@Test
+	public void testPerformanceManuallyWithManyManySnaps() throws Exception {
+		assumeFalse(SystemUtilities.isInTestingBatchMode());
+		createAndOpenTrace();
+
+		// LATER (GP-5594): 100_000 without checkStateMapIntegrity will crash.
+		final long snapCount = 100_000;
+		try (Transaction tx = tb.startTransaction()) {
+			tb.trace.getMemoryManager()
+					.addRegion("Processes[1].Memory[exe:.text]", Lifespan.nowOn(0L),
+						tb.range(0x55550000, 0x5555ffff), TraceMemoryFlag.READ,
+						TraceMemoryFlag.EXECUTE);
+			DBTraceTimeManager time = tb.trace.getTimeManager();
+			DBTraceMemorySpace space = tb.trace.getMemoryManager()
+					.getForSpace(tb.host.getAddressFactory().getDefaultAddressSpace(), true);
+			for (int i = 0; i < snapCount; i++) {
+				time.getSnapshot(i, true);
+				space.putBytes(i, tb.addr(0x55550000 + (i & 0xffff)), tb.buf(i & 0xff));
+				if (i % 1000 == 0) {
+					space.checkStateMapIntegrity();
+				}
+			}
+		}
+		traceManager.activateTrace(tb.trace);
+		traceManager.activateSnap(snapCount - 1);
+
+		Thread.sleep(1); // breakpoint here
 	}
 }

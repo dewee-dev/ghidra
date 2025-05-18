@@ -27,7 +27,8 @@ import ghidra.util.Msg;
 /**
  * Editor for a Structure Data Type.
  */
-public class StructureEditorProvider extends CompositeEditorProvider {
+public class StructureEditorProvider
+		extends CompositeEditorProvider<Structure, StructureEditorModel> {
 
 	private BitFieldEditorDialog bitFieldEditor;
 
@@ -41,7 +42,7 @@ public class StructureEditorProvider extends CompositeEditorProvider {
 		editorModel = new StructureEditorModel(this, showHexNumbers);
 		editorModel.load(structureDataType);
 		initializeActions();
-		editorPanel = new CompEditorPanel((StructureEditorModel) editorModel, this);
+		editorPanel = new StructureEditorPanel((StructureEditorModel) editorModel, this);
 		plugin.getTool().addComponentProvider(this, true);
 		updateTitle();
 		addActionsToTool();
@@ -95,12 +96,6 @@ public class StructureEditorProvider extends CompositeEditorProvider {
 	@Override
 	public String getHelpTopic() {
 		return "DataTypeEditors";
-	}
-
-	public void selectField(String fieldName) {
-		if (fieldName != null) {
-			editorPanel.selectField(fieldName);
-		}
 	}
 
 	@Override

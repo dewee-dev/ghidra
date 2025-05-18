@@ -142,7 +142,7 @@ public class DockingHelpBroker extends GHelpBroker {
 
 				@Override
 				public void actionPerformed(ActionEvent e) {
-					reloadHelpPage(getCurrentURL());
+					reloadHelpPage(getCurrentURL(), true);
 				}
 			};
 			toolbar.add(new JButton(refreshAction));
@@ -150,8 +150,8 @@ public class DockingHelpBroker extends GHelpBroker {
 	}
 
 	@Override // opened access
-	protected void reloadHelpPage(URL url) {
-		super.reloadHelpPage(url);
+	protected void reloadHelpPage(URL url, boolean preserveLocation) {
+		super.reloadHelpPage(url, preserveLocation);
 	}
 
 //=================================================================================================
@@ -233,7 +233,7 @@ public class DockingHelpBroker extends GHelpBroker {
 	 *       then just give up.
 	 *
 	 * @param area the area to call out
-	 * @param callCount the number number of times this method has already been called
+	 * @param callCount the number of times this method has already been called
 	 */
 	private void doCalloutReference(final Rectangle area, int callCount) {
 
