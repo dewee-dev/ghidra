@@ -1,4 +1,3 @@
-#@timeout 60000
 #@title lldb via ssh
 #@image-opt arg:1
 #@desc <html><body width="300px">
@@ -11,6 +10,7 @@
 #@menu-group lldb
 #@icon icon.debugger
 #@help lldb#ssh
+#@depends Debugger-rmi-trace
 #@enum StartCmd:str "process launch" "process launch --stop-at-entry"
 #@enum Endian:str auto big little
 #@arg :str "Image" "The target binary executable image on the remote system"
@@ -56,14 +56,14 @@ are copied and installed.
 
 NOTE: Automatic resolution will cause this session to terminate. When it has
 finished, try launching again.
-"@ "Would you like to install 'ghidralldb==$version'?"
+"@ "Would you like to install 'ghidralldb>=$version'?"
 
 if ($answer) {
 	Write-Host "Copying Wheels to $Env:OPT_HOST"
-	Mitigate-Scp-PyModules "Debug/Debugger-rmi-trace" "Debug/Debugger-agent-lldb"
+	Mitigate-Scp-PyModules "Debugger-rmi-trace" "<SELF>"
 
 	Write-Host "Installing Wheels into LLDB's embedded Python"
-	$arglist = Compute-Lldb-PipInstall-Args "'-f'" "os.environ['HOME']" "'ghidralldb==$version'"
+	$arglist = Compute-Lldb-PipInstall-Args "'-f'" "os.environ['HOME']" "'ghidralldb>=$version'"
 	$sshargs = Compute-Ssh-Args $arglist False
 	Start-Process -FilePath $sshargs[0] -ArgumentList $sshargs[1..$sshargs.Count] -NoNewWindow -Wait
 }

@@ -25,6 +25,8 @@ import java.util.regex.Pattern;
 
 import javax.help.UnsupportedOperationException;
 
+import org.apache.commons.lang3.StringUtils;
+
 import db.*;
 import db.util.ErrorHandler;
 import generic.jar.ResourceFile;
@@ -1236,6 +1238,12 @@ abstract public class DataTypeManagerDB implements DataTypeManager {
 			return dataType;
 		}
 
+		if (dataType instanceof BadDataType) {
+			// Avoid adding BAD data type to the manager which 
+			// will appear when needed for a missing datatype
+			return BadDataType.dataType;
+		}
+
 		if (dataType instanceof BitFieldDataType) {
 			return resolveBitFieldDataType((BitFieldDataType) dataType, handler);
 		}
@@ -1886,9 +1894,12 @@ abstract public class DataTypeManagerDB implements DataTypeManager {
 				throw new IllegalArgumentException(
 					"Datatype replacment with dynamic or factory type not permitted.");
 			}
-			if (getID(existingDt) < 0) {
+			if (!contains(existingDt)) {
 				throw new IllegalArgumentException(
 					"Datatype to replace is not contained in this datatype manager.");
+			}
+			if (existingDt instanceof BadDataType) {
+				throw new IllegalArgumentException("BAD Datatype can be deleted but not replaced.");
 			}
 			boolean fixupName = false;
 			if (!contains(replacementDt)) {
@@ -2098,32 +2109,37 @@ abstract public class DataTypeManagerDB implements DataTypeManager {
 
 	@Override
 	public void findDataTypes(String name, List<DataType> list) {
-		if (name == null || name.length() == 0) {
+		if (StringUtils.isBlank(name)) {
 			return;
 		}
 		if (name.equals(DataType.DEFAULT.getName())) {
 			list.add(DataType.DEFAULT);
 			return;
 		}
+
 		// ignore .conflict in both name and result matches
 		lock.acquire();
 		try {
 			buildSortedDataTypeList();
 			// Use exemplar datatype in root category without .conflict to position at start
 			// of possible matches
-			name = DataTypeUtilities.getNameWithoutConflict(name);
+			String baseName = DataTypeUtilities.getNameWithoutConflict(name);
 			DataType compareDataType =
-				new TypedefDataType(CategoryPath.ROOT, name, DataType.DEFAULT, this);
+				new TypedefDataType(CategoryPath.ROOT, baseName, DataType.DEFAULT, this);
 			int index = Collections.binarySearch(sortedDataTypes, compareDataType, nameComparator);
 			if (index < 0) {
+				// this allows us to find foo.conflict types
 				index = -index - 1;
 			}
+
 			// add all matches to list
 			while (index < sortedDataTypes.size()) {
 				DataType dt = sortedDataTypes.get(index);
-				if (!name.equals(DataTypeUtilities.getNameWithoutConflict(dt, false))) {
-					break;
+				String baseDtName = DataTypeUtilities.getNameWithoutConflict(dt, false);
+				if (!baseName.equals(baseDtName)) {
+					break; // not foo or foo.conflict
 				}
+
 				list.add(dt);
 				++index;
 			}
@@ -2143,9 +2159,9 @@ abstract public class DataTypeManagerDB implements DataTypeManager {
 			list.add(DataType.DEFAULT);
 			return;
 		}
-		if (monitor == null) {
-			monitor = TaskMonitor.DUMMY;
-		}
+
+		monitor = TaskMonitor.dummyIfNull(monitor);
+
 		Pattern regexp = UserSearchUtils.createSearchPattern(name, caseSensitive);
 		lock.acquire();
 		try {
@@ -2334,6 +2350,12 @@ abstract public class DataTypeManagerDB implements DataTypeManager {
 	private boolean removeInternal(DataType dataType) {
 		if (!contains(dataType)) {
 			return false;
+		}
+
+		if (dataType instanceof BadDataType) {
+			// Cannot really replace BAD datatype which is generally not directly referenced
+			deleteDataType(BAD_DATATYPE_ID);
+			return true;
 		}
 
 		long id = getID(dataType);
@@ -2926,15 +2948,11 @@ abstract public class DataTypeManagerDB implements DataTypeManager {
 
 				if (allowsDefaultBuiltInSettings() &&
 					builtInDt.getSettingsDefinitions().length != 0) {
+					// Alter built-in datatype instance to use new DB-backed default settings which 
+					// facilitates user adjustments to the original default settings.
 					DataTypeSettingsDB settings =
 						new DataTypeSettingsDB(this, builtInDt, dataTypeID);
-					if (builtInDt instanceof TypeDef) {
-						// Copy default immutable builtin typedef settings
-						Settings typedefSettings = builtInDt.getDefaultSettings();
-						for (String n : typedefSettings.getNames()) {
-							settings.setValue(n, typedefSettings.getValue(n));
-						}
-					}
+					settings.setDefaultSettings(builtInDt.getDefaultSettings());
 					settings.setAllowedSettingPredicate(n -> isBuiltInSettingAllowed(builtInDt, n));
 					builtInDt.setDefaultSettings(settings);
 				}
@@ -4579,7 +4597,8 @@ abstract public class DataTypeManagerDB implements DataTypeManager {
 		}
 	}
 
-	private record DedupedConflicts(int processCnt, int replaceCnt) {}
+	private record DedupedConflicts(int processCnt, int replaceCnt) {
+	}
 
 	private DedupedConflicts doDedupeConflicts(DataType dataType) {
 

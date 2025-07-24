@@ -4,9 +4,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -511,7 +511,7 @@ public class PowerPC64_ElfExtension extends ElfExtension {
 					address + "}";
 				elfLoadHelper.getProgram()
 						.getListing()
-						.setComment(localFunctionAddr, CodeUnit.PRE_COMMENT, cmt);
+						.setComment(localFunctionAddr, CommentType.PRE, cmt);
 			}
 			catch (Exception e) {
 				elfLoadHelper.log("Failed to generate local function symbol " + localName + " at " +
@@ -522,6 +522,7 @@ public class PowerPC64_ElfExtension extends ElfExtension {
 		Function f = elfLoadHelper.createOneByteFunction(name, address, false);
 		if (f != null && localFunction != null) {
 			f.setThunkedFunction(localFunction);
+			elfLoadHelper.setElfSymbolAddress(elfSymbol, address);
 			return null; // symbol creation handled
 		}
 
@@ -543,6 +544,11 @@ public class PowerPC64_ElfExtension extends ElfExtension {
 		if (elf.e_machine() != ElfConstants.EM_PPC64) {
 			return 0;
 		}
+
+		if (elf.getSection(".opd") != null) {
+			return 1;
+		}
+
 		// TODO: While the e_flags should indicate the use of function descriptors, this
 		// may not be set reliably.  The presence of the .opd section is another
 		// indicator but could be missing if sections have been stripped.

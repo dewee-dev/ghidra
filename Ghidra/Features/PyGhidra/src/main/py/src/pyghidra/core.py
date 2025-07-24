@@ -33,7 +33,7 @@ def start(verbose=False, *, install_dir: Path = None) -> "PyGhidraLauncher":
 
     :param verbose: Enable verbose output during JVM startup (Defaults to False)
     :param install_dir: The path to the Ghidra installation directory.
-        (Defaults to the GHIDRA_INSTALL_DIR environment variable)
+        (Defaults to the GHIDRA_INSTALL_DIR environment variable or "lastrun" file)
     :return: The PyGhidraLauncher used to start the JVM
     """
     from pyghidra.launcher import HeadlessPyGhidraLauncher
@@ -176,7 +176,7 @@ def _setup_script(project: "GhidraProject", program: "Program"):
             location = ProgramLocation(program, mem.getMinAddress())
     state = GhidraState(None, project, program, location, None, None)
     script = PyGhidraScript()
-    script.set(state, TaskMonitor.DUMMY, PrintWriter(System.out))
+    script.set(state, TaskMonitor.DUMMY, PrintWriter(System.out), PrintWriter(System.err))
     return script
 
 
@@ -187,10 +187,7 @@ def _analyze_program(flat_api, program):
         GhidraScriptUtil.acquireBundleHostReference()
         try:
             flat_api.analyzeAll(program)
-            if hasattr(GhidraProgramUtilities, "markProgramAnalyzed"):
-                GhidraProgramUtilities.markProgramAnalyzed(program)
-            else:
-                GhidraProgramUtilities.setAnalyzedFlag(program, True)  # @UndefinedVariable
+            GhidraProgramUtilities.markProgramAnalyzed(program)
         finally:
             GhidraScriptUtil.releaseBundleHostReference()
 
@@ -302,7 +299,7 @@ def _flat_api(
         This may be either a Java class or its path. (Defaults to None)
     :param install_dir: The path to the Ghidra installation directory. This parameter is only
         used if Ghidra has not been started yet.
-        (Defaults to the GHIDRA_INSTALL_DIR environment variable)
+        (Defaults to the GHIDRA_INSTALL_DIR environment variable or "lastrun" file)
     :raises ValueError: If the provided language, compiler or loader is invalid.
     :raises TypeError: If the provided loader does not implement `ghidra.app.util.opinion.Loader`.
     """
@@ -378,7 +375,7 @@ def run_script(
         This may be either a Java class or its path. (Defaults to None)
     :param install_dir: The path to the Ghidra installation directory. This parameter is only
         used if Ghidra has not been started yet.
-        (Defaults to the GHIDRA_INSTALL_DIR environment variable)
+        (Defaults to the GHIDRA_INSTALL_DIR environment variable or "lastrun" file)
     :param program_name: The name of the program to open in Ghidra.
         (Defaults to None, which results in the name being derived from "binary_path")
     :param nested_project_location: If True, assumes "project_location" contains an extra nested 
