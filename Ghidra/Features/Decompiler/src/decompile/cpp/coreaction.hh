@@ -4,9 +4,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -574,7 +574,7 @@ class ActionConditionalConst : public Action {
   static Varnode *placeCopy(PcodeOp *op,BlockBasic *bl,Varnode *constVn,Funcdata &data);
   static void placeMultipleConstants(vector<PcodeOpNode> &phiNodeEdges,vector<int4> &marks,Varnode *constVn,Funcdata &data);
   void handlePhiNodes(Varnode *varVn,Varnode *constVn,vector<PcodeOpNode> &phiNodeEdges,Funcdata &data);
-  void propagateConstant(Varnode *varVn,Varnode *constVn,FlowBlock *constBlock,bool useMultiequal,Funcdata &data);
+  void propagateConstant(Varnode *varVn,Varnode *constVn,uintb constVal,FlowBlock *constBlock,bool useMultiequal,Funcdata &data);
 public:
   ActionConditionalConst(const string &g) : Action(0,"condconst",g) {}	///< Constructor
   virtual Action *clone(const ActionGroupList &grouplist) const {
@@ -831,6 +831,7 @@ public:
 /// This produces on intermediate view of symbols on the stack.
 class ActionRestructureVarnode : public Action {
   int4 numpass;			///< Number of passes performed for this function
+  static bool isCopyConstant(Varnode *vn);		///< Is the given Varnode a constant or a COPY of a constant
   static bool isDelayedConstant(Varnode *vn);		///< Determine if given Varnode is or will be a constant
   static void protectSwitchPathIndirects(PcodeOp *op);	///< Protect path to the given switch from INDIRECT collapse
   static void protectSwitchPaths(Funcdata &data);	///< Look for switches and protect path of switch variable
@@ -1063,48 +1064,6 @@ public:
   void step(void);				///< Advance to the next propagation edge
   bool valid(void) const { return (op != (PcodeOp *)0); }	///< Return \b true if there are edges left to iterate
 };
-
-/// Class representing a \e term in an additive expression
-class AdditiveEdge {
-  PcodeOp *op;			///< Lone descendant reading the term
-  int4 slot;			///< The input slot of the term
-  Varnode *vn;			///< The term Varnode
-  PcodeOp *mult;		///< The (optional) multiplier being applied to the term
-public:
-  AdditiveEdge(PcodeOp *o,int4 s,PcodeOp *m) { op = o; slot = s; vn = op->getIn(slot); mult=m; }	///< Constructor
-  PcodeOp *getMultiplier(void) const { return mult; }	///< Get the multiplier PcodeOp
-  PcodeOp *getOp(void) const { return op; }		///< Get the component PcodeOp adding in the term
-  int4 getSlot(void) const { return slot; }		///< Get the slot reading the term
-  Varnode *getVarnode(void) const { return vn; }	///< Get the Varnode term
-};
-
-/// \brief A class for ordering Varnode terms in an additive expression.
-///
-/// Given the final PcodeOp in a data-flow expression that sums 2 or more
-/// Varnode \e terms, this class collects all the terms then allows
-/// sorting of the terms to facilitate constant collapse and factoring simplifications.
-class TermOrder {
-  PcodeOp *root;			///< The final PcodeOp in the expression
-  vector<AdditiveEdge> terms;		///< Collected terms
-  vector<AdditiveEdge *> sorter;		///< An array of references to terms for quick sorting
-  static bool additiveCompare(const AdditiveEdge *op1,const AdditiveEdge *op2);
-public:
-  TermOrder(PcodeOp *rt) { root = rt; }	///< Construct given root PcodeOp
-  int4 getSize(void) const { return terms.size(); }	///< Get the number of terms in the expression
-  void collect(void);			///< Collect all the terms in the expression
-  void sortTerms(void);			///< Sort the terms using additiveCompare()
-  const vector<AdditiveEdge *> &getSort(void) { return sorter; }	///< Get the sorted list of references
-};
-
-/// \brief A comparison operator for ordering terms in a sum
-///
-/// This is based on Varnode::termOrder which groups constants terms and
-/// ignores multiplicative coefficients.
-/// \param op1 is the first term to compare
-/// \param op2 is the second term
-/// \return \b true if the first term is less than the second
-inline bool TermOrder::additiveCompare(const AdditiveEdge *op1,const AdditiveEdge *op2) {
-    return (-1 == op1->getVarnode()->termOrder(op2->getVarnode())); }
 
 } // End namespace ghidra
 #endif
