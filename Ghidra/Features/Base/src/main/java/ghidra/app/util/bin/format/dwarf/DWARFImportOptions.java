@@ -88,7 +88,8 @@ public class DWARFImportOptions {
 		"Copy External Debug File Symbols";
 	private static final String OPTION_COPY_EXTERNAL_DEBUG_FILE_SYMBOLS_DESC =
 		"Copies symbols (which will typically be mangled) from a found external debug file into " +
-			"the main program";
+			"the main program.  See Edit | DWARF External Debug Config to control how those " +
+			"external debug files are found.";
 
 	private static final String OPTION_CHARSET_NAME = "Debug Strings Charset";
 	private static final String OPTION_CHARSET_NAME_DESC = """
@@ -140,6 +141,24 @@ public class DWARFImportOptions {
 	private String charsetName = "";
 	private boolean showVariableStorageInfo = false;
 	private boolean useStaticStackFrameRegisterValue = true;
+
+	/**
+	 * Used to control which macro info entries are used to create enums.
+	 */
+	public enum MacroEnumSetting {
+		NONE,
+		IGNORE_COMMAND_LINE,
+		ALL;
+	}
+
+	private static final MacroEnumSetting OPTION_DEFAULT_MACRO_ENUM_SETTING =
+		MacroEnumSetting.IGNORE_COMMAND_LINE;
+
+	private MacroEnumSetting macroEnumSetting = OPTION_DEFAULT_MACRO_ENUM_SETTING;
+
+	private static final String OPTION_MACRO_ENUM_NAME = "Create Enums from Macros";
+	private static final String OPTION_MACRO_ENUM_DESC =
+		"Controls which DWARF macro info entries are used to create enums";
 
 	/**
 	 * Create new instance
@@ -502,6 +521,14 @@ public class DWARFImportOptions {
 		this.useStaticStackFrameRegisterValue = useStaticStackFrameRegisterValue;
 	}
 
+	public MacroEnumSetting getMacroEnumSetting() {
+		return macroEnumSetting;
+	}
+
+	public void setMacroEnumSetting(MacroEnumSetting setting) {
+		macroEnumSetting = setting;
+	}
+
 	/**
 	 * See {@link Analyzer#registerOptions(Options, ghidra.program.model.listing.Program)}
 	 * 
@@ -553,6 +580,9 @@ public class DWARFImportOptions {
 
 		options.registerOption(OPTION_SHOW_VARIABLE_STORAGE_INFO, isShowVariableStorageInfo(),
 			null, OPTION_SHOW_VARIABLE_STORAGE_DESC);
+
+		options.registerOption(OPTION_MACRO_ENUM_NAME, getMacroEnumSetting(), null,
+			OPTION_MACRO_ENUM_DESC);
 	}
 
 	/**
@@ -587,5 +617,6 @@ public class DWARFImportOptions {
 		setCharsetName(options.getString(OPTION_CHARSET_NAME, getCharsetName()));
 		setShowVariableStorageInfo(options.getBoolean(OPTION_SHOW_VARIABLE_STORAGE_INFO,
 			isShowVariableStorageInfo()));
+		setMacroEnumSetting(options.getEnum(OPTION_MACRO_ENUM_NAME, getMacroEnumSetting()));
 	}
 }
