@@ -30,6 +30,7 @@ import ghidra.GhidraJarApplicationLayout;
 import ghidra.app.plugin.core.analysis.AutoAnalysisManager;
 import ghidra.app.plugin.core.osgi.BundleHost;
 import ghidra.app.script.*;
+import ghidra.app.script.JythonStubScriptProvider.JythonStubException;
 import ghidra.app.util.headless.HeadlessScript.HeadlessContinuationOption;
 import ghidra.app.util.importer.ProgramLoader;
 import ghidra.app.util.opinion.*;
@@ -957,6 +958,14 @@ public class HeadlessAnalyzer {
 					}
 				}
 			}
+		}
+		catch (JythonStubException e) {
+			// We want to effectively exit with an error code, but this class may be used as a 
+			// Ghidra library method in some scenarios, so System.exit(1) is too aggressive.
+			// Throwing an Error allows Ghidra to exit with an uncaught exception when run from
+			// the command line, but allows for the possibility of a library client to handle
+			// the problem in a way that better suits their application.
+			throw new Error(e);
 		}
 		catch (Exception exc) {
 			String logErrorMsg = "REPORT SCRIPT ERROR: " + scriptName + " : " + exc.getMessage();
