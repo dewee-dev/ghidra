@@ -102,6 +102,7 @@ public class UpdateServerAllowList implements GhidraLaunchable {
 					UrlAllowListManager.getAccessMap();
 				List<ServerSpecification> servers = new ArrayList<>(accessMap.keySet());
 				if (servers.isEmpty()) {
+					// Do not use logging here as this is a launchable
 					System.out.println("Server Allow List is empty.");
 				}
 				else {
@@ -122,7 +123,6 @@ public class UpdateServerAllowList implements GhidraLaunchable {
 		catch (Exception e) {
 			Msg.error("Exception processing Allow List updates", e);
 		}
-		System.out.println("Done");
 	}
 
 	private static void usage(String[] args) {
