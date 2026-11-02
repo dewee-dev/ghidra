@@ -22,8 +22,7 @@ import java.net.URL;
 import ghidra.framework.client.NotConnectedException;
 import ghidra.framework.client.RepositoryAdapter;
 import ghidra.framework.data.DefaultProjectData;
-import ghidra.framework.main.AppInfo;
-import ghidra.framework.model.*;
+import ghidra.framework.model.ProjectLocator;
 import ghidra.framework.protocol.ghidra.GhidraURLConnection.StatusCode;
 import ghidra.framework.store.LockException;
 import ghidra.util.NotOwnerException;
@@ -67,6 +66,13 @@ public class DefaultLocalGhidraProtocolConnector extends GhidraProtocolConnector
 	}
 
 	@Override
+	protected String parseRepositoryName() {
+		// The URL path is a local storage path (possibly UNC), not a server repository path.
+		// The project name is obtained from the locator after superclass construction.
+		return null;
+	}
+
+	@Override
 	public String getRepositoryName() {
 		return localStorageLocator.getName();
 	}
@@ -74,7 +80,9 @@ public class DefaultLocalGhidraProtocolConnector extends GhidraProtocolConnector
 	@Override
 	protected String parseItemPath() throws MalformedURLException {
 
-		String path = url.getQuery();
+		// Content names must be decoded before project lookup or folder creation.
+		// URI decoding preserves literal '+' characters and decodes percent escapes only once.
+		String path = uri.getQuery();
 
 		initFolderItemPath(path);
 
@@ -131,16 +139,6 @@ public class DefaultLocalGhidraProtocolConnector extends GhidraProtocolConnector
 	DefaultProjectData getLocalProjectData(boolean readOnlyAccess) throws IOException {
 		if (connect(readOnlyAccess) != StatusCode.OK) {
 			return null;
-		}
-
-		// Use active project if it matches project locator
-		Project activeProject = AppInfo.getActiveProject();
-		if (activeProject != null &&
-			localStorageLocator.equals(activeProject.getProjectLocator())) {
-			ProjectData activeProjectData = activeProject.getProjectData();
-			if (activeProjectData instanceof DefaultProjectData projectData) {
-				return projectData;
-			}
 		}
 
 		try {

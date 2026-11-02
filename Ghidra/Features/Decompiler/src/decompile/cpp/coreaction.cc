@@ -505,11 +505,42 @@ int4 ActionStackPtrFlow::apply(Funcdata &data)
   return 0;
 }
 
+/// \brief Register a lane size suggested by a piece of a laned register
+///
+/// If the piece's size is itself an allowed lane size, it is registered. Otherwise the piece
+/// is a run of smaller lanes (three floats taken from a four float vector, for instance) and
+/// the largest allowed lane size that tiles both the piece and its offset within the register
+/// is registered, provided the piece holds at least two such lanes.
+/// \param size is the size of the piece in bytes
+/// \param offset is the byte offset of the piece within the register
+/// \param allowedLanes is used to determine if a putative lane size is allowed
+/// \param checkLanes collects the possible lane sizes
+void ActionLaneDivide::addPieceLaneSize(int4 size,int4 offset,const LanedRegister &allowedLanes,LanedRegister &checkLanes)
+
+{
+  if (allowedLanes.allowedLane(size)) {
+    checkLanes.addLaneSize(size);			// Register this possible size
+    return;
+  }
+  int4 best = 0;
+  LanedRegister::const_iterator enditer = allowedLanes.end();
+  for(LanedRegister::const_iterator iter=allowedLanes.begin();iter!=enditer;++iter) {
+    int4 laneSize = *iter;
+    if (laneSize * 2 > size) break;			// Sizes come smallest first
+    if ((size % laneSize) == 0 && (offset % laneSize) == 0)
+      best = laneSize;
+  }
+  if (best > 0)
+    checkLanes.addLaneSize(best);
+}
+
 /// \brief Examine the PcodeOps using the given Varnode to determine possible lane sizes
 ///
 /// Run through the defining op and any descendant ops of the given Varnode, looking for
 /// CPUI_PIECE and CPUI_SUBPIECE. Use these to determine possible lane sizes and
-/// register them with the given LanedRegister object.
+/// register them with the given LanedRegister object. A piece whose size is not itself a lane
+/// size suggests the largest lane size that tiles it (addPieceLaneSize); so does the input of
+/// a defining CPUI_INT_ZEXT when it is not itself a lane size (a run of lanes under zero lanes).
 /// \param vn is the given Varnode
 /// \param allowedLanes is used to determine if a putative lane size is allowed
 /// \param checkLanes collects the possible lane sizes
@@ -517,32 +548,26 @@ void ActionLaneDivide::collectLaneSizes(Varnode *vn,const LanedRegister &allowed
 
 {
   list<PcodeOp *>::const_iterator iter = vn->beginDescend();
-  int4 step = 0;		// 0 = descendants, 1 = def, 2 = done
-  if (iter == vn->endDescend()) {
-    step = 1;
+  list<PcodeOp *>::const_iterator enditer = vn->endDescend();
+  while(iter != enditer) {
+    PcodeOp *op = *iter;
+    ++iter;
+    if (op->code() != CPUI_SUBPIECE) continue;	// Is the big register split into pieces
+    addPieceLaneSize(op->getOut()->getSize(),(int4)op->getIn(1)->getOffset(),allowedLanes,checkLanes);
   }
-  while(step < 2) {
-    int4 curSize;		// Putative lane size
-    if (step == 0) {
-      PcodeOp *op = *iter;
-      ++iter;
-      if (iter == vn->endDescend())
-	step = 1;
-      if (op->code() != CPUI_SUBPIECE) continue;	// Is the big register split into pieces
-      curSize = op->getOut()->getSize();
-    }
-    else {
-      step = 2;
-      if (!vn->isWritten()) continue;
-      PcodeOp *op = vn->getDef();
-      if (op->code() != CPUI_PIECE) continue;		// Is the big register formed from smaller pieces
-      curSize = op->getIn(0)->getSize();
-      int4 tmpSize = op->getIn(1)->getSize();
-      if (tmpSize < curSize)
-	curSize = tmpSize;
-    }
-    if (allowedLanes.allowedLane(curSize))
-      checkLanes.addLaneSize(curSize);			// Register this possible size
+  if (!vn->isWritten()) return;
+  PcodeOp *op = vn->getDef();
+  if (op->code() == CPUI_PIECE) {			// Is the big register formed from smaller pieces
+    int4 loSize = op->getIn(1)->getSize();
+    addPieceLaneSize(loSize,0,allowedLanes,checkLanes);
+    addPieceLaneSize(op->getIn(0)->getSize(),loSize,allowedLanes,checkLanes);
+  }
+  else if (op->code() == CPUI_INT_ZEXT) {
+    // Is the big register a run of lanes with zero lanes above it. A single lane extended is left alone:
+    // it suggests no lane size on its own.
+    int4 inSize = op->getIn(0)->getSize();
+    if (!allowedLanes.allowedLane(inSize))
+      addPieceLaneSize(inSize,0,allowedLanes,checkLanes);
   }
 }
 
@@ -595,7 +620,9 @@ bool ActionLaneDivide::processVarnode(Funcdata &data,Varnode *vn,const LanedRegi
 int4 ActionLaneDivide::apply(Funcdata &data)
 
 {
-  data.setLanedRegGenerated();
+  // Varnodes keep registering as laned accesses after this pass: a stack location of a laned size
+  // only appears once the stack analysis has turned its LOADs and STOREs into Varnodes, so the pass
+  // runs again on each round of the main loop over whatever registered since its last run.
   map<VarnodeData,const LanedRegister *>::const_iterator iter;
   for(int4 mode=0;mode<3;++mode) {
     bool allStorageProcessed = true;
@@ -1215,7 +1242,7 @@ int4 ActionConstantPtr::apply(Funcdata &data)
     if (opc == CPUI_INT_ADD) {
       if (op->getIn(1-slot)->isSpacebase()) continue; // Make sure other side is not a spacebase already
     }
-    else if ((opc == CPUI_PTRSUB)||(opc==CPUI_PTRADD))
+    else if (opc == CPUI_PTRSUB || opc==CPUI_PTRADD || opc == CPUI_SEGMENTOP)
       continue;
     Address rampoint;
     uintb fullEncoding;
@@ -1562,11 +1589,14 @@ void ActionFuncLink::funcLinkInput(FuncCallSpecs *fc,Funcdata &data)
     bool setplaceholder = varargs;
     for(int4 i=0;i<numparam;++i) {
       ProtoParameter *param = fc->getParam(i);
-      if (!param->hasStorage()) continue;
-      active->registerTrial(param->getAddress(),param->getSize());
-      active->getTrial(i).markActive(); // Parameter is not optional
+      if (!param->hasStorage()) {
+	data.opInsertInput(op,data.newConstant(param->getSize(),0),op->numInput());	// Put #0 in unassigned slot
+	continue;
+      }
+      ParamTrial &paramtrial(active->registerTrial(param->getAddress(),param->getSize()));
+      paramtrial.markActive(); // Parameter is not optional
       if (varargs){
-    	  active->getTrial(i).setFixedPosition(i);
+    	  paramtrial.setFixedPosition(i);
       }
       AddrSpace *spc = param->getAddress().getSpace();
       uintb off = param->getAddress().getOffset();
@@ -3621,7 +3651,7 @@ int4 ActionDoNothing::apply(Funcdata &data)
 	}
       }
       else if (bb->unblockedMulti(0)) {
-	if (data.isNormalizationOn() || bb->hasNoImmediateCopy(0)) {
+	if (data.isNormalizationOn() || data.isJumptableRecoveryOn() || bb->hasNoImmediateCopy(0)) {
 	  data.removeDoNothingBlock(bb);
 	  count += 1;
 	  return 0;
@@ -3846,17 +3876,19 @@ void ActionDeadCode::propagateConsumed(vector<Varnode *> &worklist)
     pushConsumed(outc,op->getIn(0),worklist);
     if (op->getIn(1)->getSpace()->getType()==IPTR_IOP) {
       PcodeOp *indop = PcodeOp::getOpFromConst(op->getIn(1)->getAddr());
-      if (!indop->isDead()) {
-	if (indop->code() == CPUI_COPY) {
-	  if (indop->getOut()->characterizeOverlap(*op->getOut())>0) {
-	    pushConsumed(~((uintb)0),indop->getOut(),worklist);	// Mark the copy as consumed
-	    indop->setIndirectSource();
-	  }
-	  // If we reach here, there isn't a true block of INDIRECT (RuleIndirectCollapse will convert it to COPY)
-	}
-	else
-	  indop->setIndirectSource();
+      if (indop->isDead()) {
+	ostringstream s;
+	s << "Hanging INDIRECT at " << op->getAddr();
+	throw LowlevelError(s.str());
       }
+      if (indop->code() == CPUI_COPY) {
+	if (indop->getOut()->characterizeOverlap(*op->getOut())>0) {
+	  pushConsumed(~((uintb)0),indop->getOut(),worklist);	// Mark the copy as consumed
+	  indop->setIndirectSource();
+	}
+      }
+      else
+	indop->setIndirectSource();
     }
     break;
   case CPUI_COPY:
@@ -3931,6 +3963,12 @@ void ActionDeadCode::propagateConsumed(vector<Varnode *> &worklist)
 	a = 0;			// We know nothing about the low order consumption of the input bits
       else
 	a = outc << sa;		// Most cases just do this
+      if ((a==0)&&(outc!=0)&&(op->getIn(0)->getSize() > sizeof(uintb))) {
+	// The consumed bits were shifted beyond the precision of the consume field,
+	// but bits of the input above the field are still consumed
+	a = ~((uintb)0);
+	a = a ^ (a >> 1);	// Set the highest bit possible in the mask to indicate some consumption
+      }
       b = (outc == 0) ? 0 : ~((uintb)0);
       pushConsumed(a,op->getIn(0),worklist);
       pushConsumed(b,op->getIn(1),worklist);
@@ -5025,10 +5063,8 @@ void ActionInputPrototype::markActiveInputRefs(ParamActive &active,list<InputRef
       continue;
     if (!data.getFuncProto().possibleInputParam((*iter).addr, (*iter).dataType->getSize()))
       continue;
-    int4 slot = active.getNumTrials();
-    active.registerTrial((*iter).addr,(*iter).dataType->getSize());
+    ParamTrial &trial(active.registerTrial((*iter).addr,(*iter).dataType->getSize()));
     typeList.push_back((*iter).dataType);
-    ParamTrial &trial(active.getTrial(slot));
     trial.markActive();
   }
 }
@@ -5068,7 +5104,6 @@ int4 ActionInputPrototype::apply(Funcdata &data)
       vn = *iter;
       ++iter;
       if (data.getFuncProto().possibleInputParam(vn->getAddr(),vn->getSize())) {
-	int4 slot = active.getNumTrials();
 	if (vn->isPersist()) {
 	  int4 sz;
 	  Address addr = data.findDisjointCover(vn, sz);
@@ -5077,16 +5112,18 @@ int4 ActionInputPrototype::apply(Funcdata &data)
 	    ct = useHigh ? vn->getHigh()->getType() : vn->getType();
 	  else
 	    ct = data.getArch()->types->getBase(sz, TYPE_UNKNOWN);
-	  active.registerTrial(addr,sz);
+	  ParamTrial &paramtrial(active.registerTrial(addr,sz));
 	  typeList.push_back(ct);
+	  if (!vn->hasNoDescend())
+	    paramtrial.markActive();	// Mark as active if it has descendants
 	}
 	else {
-	  active.registerTrial(vn->getAddr(),vn->getSize());
+	  ParamTrial &paramtrial(active.registerTrial(vn->getAddr(),vn->getSize()));
 	  Datatype *ct = useHigh ? vn->getHigh()->getType() : vn->getType();
 	  typeList.push_back(ct);
+	  if (!vn->hasNoDescend())
+	    paramtrial.markActive();	// Mark as active if it has descendants
 	}
-	if (!vn->hasNoDescend())
-	  active.getTrial(slot).markActive(); // Mark as active if it has descendants
       }
     }
     markActiveInputRefs(active, inputRefs, typeList, data);
